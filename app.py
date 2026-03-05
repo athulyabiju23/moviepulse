@@ -1,0 +1,307 @@
+# streamlit app for moviepulse
+# run with: streamlit run app.py
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+st.set_page_config(page_title="Reddit Movie Pulse", page_icon="🎬", layout="wide")
+
+# load csvs
+@st.cache_data
+def load_data():
+    comp = pd.read_csv("data/platform_comparison.csv")
+    scores = pd.read_csv("data/reddit_movie_scores_v2.csv")
+    comments = pd.read_csv("data/reddit_sentiment_multilingual.csv")
+    comments["comment_timestamp"] = pd.to_datetime(comments["comment_timestamp"])
+    return comp, scores, comments
+
+try:
+    comp, scores, comments = load_data()
+except:
+    st.error("cant find data files! put csvs in data/ folder")
+    st.stop()
+
+# ---- sidebar ----
+st.sidebar.title("🎬 Movie Pulse")
+st.sidebar.markdown("---")
+
+regions = ["All"] + sorted(comp["region"].unique().tolist())
+sel_region = st.sidebar.selectbox("Region", regions)
+
+all_genres = set()
+for g in comp["genre"].dropna():
+    for x in g.split(", "):
+        all_genres.add(x)
+genres = ["All"] + sorted(all_genres)
+sel_genre = st.sidebar.selectbox("Genre", genres)
+
+min_comm = st.sidebar.slider("Min Comments", 3, 500, 20)
+
+# filter
+df = comp.copy()
+if sel_region != "All":
+    df = df[df["region"] == sel_region]
+if sel_genre != "All":
+    df = df[df["genre"].str.contains(sel_genre, na=False)]
+df = df[df["total_comments"] >= min_comm]
+
+st.sidebar.markdown("---")
+st.sidebar.write(f"Showing **{len(df)}** movies")
+
+# ---- header ----
+st.title("Reddit Movie Pulse 🎬")
+st.caption("comparing reddit opinions vs imdb and rotten tomatoes")
+
+if len(df) == 0:
+    st.warning("no movies match these filters, try changing them")
+    st.stop()
+
+# kpis
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Movies", len(df))
+c2.metric("Reddit Avg", f"{df['reddit_score'].mean():.2f}")
+c3.metric("IMDb Avg", f"{df['imdb_rating'].mean():.2f}")
+c4.metric("Correlation", f"{df['reddit_score'].corr(df['imdb_rating']):.3f}")
+c5.metric("RT Avg", f"{df['rt_score_10'].mean():.2f}")
+
+st.markdown("---")
+
+tab1, tab2, tab3, tab4 = st.tabs(["Platform Comparison", "Movie Lookup", "Sentiment", "Predictions"])
+
+
+# ===== TAB 1 =====
+with tab1:
+    left, right = st.columns([3, 2])
+
+    with left:
+        r = df["reddit_score"].corr(df["imdb_rating"])
+        fig = px.scatter(
+            df, x="imdb_rating", y="reddit_score",
+            color="region", size="total_comments",
+            hover_name="movie_name",
+            title=f"Reddit vs IMDb (r={r:.3f})",
+            opacity=0.7,
+            color_discrete_map={"Hollywood":"#FF4500", "Bollywood":"#4169E1", "Kollywood":"#2ECC71"}
+        )
+        fig.add_trace(go.Scatter(x=[1,10], y=[1,10], mode="lines",
+                      line=dict(dash="dash", color="gray"), name="perfect agreement"))
+        fig.update_layout(xaxis_title="IMDb", yaxis_title="Reddit", height=420,
+                         xaxis=dict(range=[2,9.5]), yaxis=dict(range=[3,8]))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        reg = df.groupby("region").agg(
+            reddit=("reddit_score","mean"), imdb=("imdb_rating","mean"),
+            rt=("rt_score_10","mean")
+        ).reset_index()
+
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(name="Reddit", x=reg["region"], y=reg["reddit"], marker_color="#FF4500"))
+        fig2.add_trace(go.Bar(name="IMDb", x=reg["region"], y=reg["imdb"], marker_color="#F5C518"))
+        fig2.add_trace(go.Bar(name="RT", x=reg["region"], y=reg["rt"], marker_color="#FA320A"))
+        fig2.update_layout(title="Avg Ratings by Region", barmode="group",
+                          yaxis=dict(range=[0,10]), height=420)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # genre comparison
+    gdata = []
+    for _, row in df.iterrows():
+        if pd.notna(row["genre"]):
+            for g in row["genre"].split(", "):
+                gdata.append({"genre":g, "reddit":row["reddit_score"],
+                             "imdb":row["imdb_rating"], "rt":row.get("rt_score_10", np.nan)})
+
+    if len(gdata) > 0:
+        gdf = pd.DataFrame(gdata)
+        gavg = gdf.groupby("genre").agg(
+            reddit=("reddit","mean"), imdb=("imdb","mean"),
+            rt=("rt","mean"), n=("reddit","count")
+        ).reset_index()
+        gavg = gavg[gavg["n"] >= 5].sort_values("n", ascending=True)
+
+        if len(gavg) > 0:
+            fig3 = go.Figure()
+            fig3.add_trace(go.Bar(name="Reddit", y=gavg["genre"], x=gavg["reddit"], orientation="h", marker_color="#FF4500"))
+            fig3.add_trace(go.Bar(name="IMDb", y=gavg["genre"], x=gavg["imdb"], orientation="h", marker_color="#F5C518"))
+            fig3.add_trace(go.Bar(name="RT", y=gavg["genre"], x=gavg["rt"], orientation="h", marker_color="#FA320A"))
+            fig3.update_layout(title="Ratings by Genre", barmode="group",
+                              xaxis=dict(range=[0,10]), height=450)
+            st.plotly_chart(fig3, use_container_width=True)
+        else:
+            st.info("not enough movies per genre to compare (need 5+ per genre)")
+    else:
+        st.info("no genre data available for current filters")
+
+    # disagreements
+    df["diff"] = df["reddit_score"] - df["imdb_rating"]
+    left2, right2 = st.columns(2)
+
+    with left2:
+        st.subheader("Reddit rates HIGHER than IMDb")
+        top10 = df.nlargest(10, "diff")[["movie_name","reddit_score","imdb_rating","diff"]]
+        top10.columns = ["Movie","Reddit","IMDb","Gap"]
+        st.dataframe(top10, hide_index=True, use_container_width=True)
+
+    with right2:
+        st.subheader("Reddit rates LOWER than IMDb")
+        bot10 = df.nsmallest(10, "diff")[["movie_name","reddit_score","imdb_rating","diff"]]
+        bot10.columns = ["Movie","Reddit","IMDb","Gap"]
+        st.dataframe(bot10, hide_index=True, use_container_width=True)
+
+
+# ===== TAB 2: movie lookup =====
+with tab2:
+    st.subheader("look up a movie")
+
+    movies = sorted(df["movie_name"].unique().tolist())
+    pick = st.selectbox("pick a movie", movies)
+
+    if pick:
+        m = df[df["movie_name"] == pick].iloc[0]
+        m_comments = comments[comments["movie_name"] == pick]
+        # only show comments that actually mention the movie
+        movie_words = pick.lower().split()
+        relevant = m_comments[m_comments["comment_text"].str.lower().apply(
+            lambda x: any(w in x for w in movie_words if len(w) > 3)
+        )]
+        if len(relevant) > 3:
+            m_comments = relevant
+        st.caption(f"found {len(m_comments)} comments for '{pick}'")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Reddit", f"{m['reddit_score']:.2f}")
+        c2.metric("IMDb", f"{m['imdb_rating']:.1f}")
+        rt_val = m.get("rt_score_10", None)
+        c3.metric("RT (/10)", f"{rt_val:.1f}" if pd.notna(rt_val) else "N/A")
+        c4.metric("Comments", f"{m['total_comments']:.0f}")
+
+        st.write(f"**Genre:** {m.get('genre','N/A')} | **Region:** {m.get('region','N/A')}")
+
+        if len(m_comments) > 0:
+            left, right = st.columns(2)
+
+            with left:
+                if "multi_label" in m_comments.columns:
+                    counts = m_comments["multi_label"].value_counts()
+                    fig = px.pie(values=counts.values, names=counts.index,
+                                title="sentiment breakdown",
+                                color=counts.index,
+                                color_discrete_map={"positive":"#22c55e","neutral":"#94a3b8","negative":"#ef4444"})
+                    st.plotly_chart(fig, use_container_width=True)
+
+            with right:
+                if "multi_score" in m_comments.columns:
+                    fig = px.histogram(m_comments, x="multi_score", nbins=15,
+                                      title="score distribution", color_discrete_sequence=["#FF4500"])
+                    st.plotly_chart(fig, use_container_width=True)
+
+            # top comments — drop dupes first
+            st.subheader("top comments")
+            top = m_comments.drop_duplicates(subset=["comment_text"]).nlargest(5, "upvotes")[
+                ["comment_text","upvotes","multi_label","subreddit"]
+            ].copy()
+            top.columns = ["Comment","Upvotes","Sentiment","Sub"]
+            top["Comment"] = top["Comment"].str[:200] + "..."
+            st.dataframe(top, hide_index=True, use_container_width=True)
+        else:
+            st.info("no comments found for this movie")
+
+
+# ===== TAB 3: sentiment =====
+with tab3:
+    left, right = st.columns(2)
+
+    with left:
+        models = pd.DataFrame({
+            "Model": ["VADER","TextBlob","RoBERTa","Multi BERT"],
+            "MAE": [2.65, 2.29, 1.94, 1.93],
+            "Type": ["Lexicon","Lexicon","Transformer","Transformer"]
+        })
+        fig = px.bar(models, x="Model", y="MAE", color="Type",
+                    title="MAE by model (lower = better)",
+                    color_discrete_map={"Lexicon":"#94a3b8","Transformer":"#FF4500"})
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        models["Corr"] = [0.125, 0.127, 0.416, 0.365]
+        fig = px.bar(models, x="Model", y="Corr", color="Type",
+                    title="correlation w/ explicit ratings (higher = better)",
+                    color_discrete_map={"Lexicon":"#94a3b8","Transformer":"#FF4500"})
+        st.plotly_chart(fig, use_container_width=True)
+
+    # languages
+    st.subheader("languages detected")
+    if "language" in comments.columns:
+        langs = comments["language"].value_counts().head(10)
+        fig = px.bar(x=langs.index, y=langs.values, title="top 10 comment languages",
+                    color_discrete_sequence=["#4ECDC4"])
+        fig.update_layout(xaxis_title="Language", yaxis_title="Count")
+        st.plotly_chart(fig, use_container_width=True)
+
+        eng = (comments["language"]=="en").mean() * 100
+        st.info(f"{eng:.1f}% english, {100-eng:.1f}% non-english (handled by multilingual bert)")
+
+    # sentiment over time
+    st.subheader("sentiment over time")
+    score_col = "multi_score" if "multi_score" in comments.columns else "final_score_v2"
+    monthly = comments.groupby(comments["comment_timestamp"].dt.to_period("M")).agg(
+        avg=(score_col, "mean"), n=("movie_name", "count")
+    ).reset_index()
+    monthly["month"] = monthly["comment_timestamp"].astype(str)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Scatter(x=monthly["month"], y=monthly["avg"],
+                  name="avg score", line=dict(color="#FF4500", width=2)), secondary_y=False)
+    fig.add_trace(go.Bar(x=monthly["month"], y=monthly["n"],
+                  name="volume", marker_color="rgba(69,183,209,0.3)"), secondary_y=True)
+    fig.update_layout(title="monthly sentiment + volume", height=350)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ===== TAB 4: predictions =====
+with tab4:
+    st.subheader("can reddit predict imdb ratings?")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Random Forest MAE", "0.758")
+    c2.metric("Baseline (just guess avg)", "0.761")
+    c3.metric("Improvement", "0.3%", delta="0.003")
+
+    st.warning(
+        "the model barely beats naive baseline. this actually confirms our main finding — "
+        "reddit sentiment is fundamentally independent from imdb, not just a noisy version of it."
+    )
+
+    # feature importance
+    st.subheader("which reddit features matter?")
+    feats = pd.DataFrame({
+        "feature": ["negative_ratio","neutral_ratio","sentiment_shift","positive_ratio",
+                    "avg_score","std_score","controversy","avg_upvotes",
+                    "median_score","max_upvotes","comment_count","log_comments"],
+        "importance": [0.198,0.108,0.102,0.089,0.086,0.073,0.066,0.065,0.063,0.061,0.047,0.041]
+    })
+    fig = px.bar(feats.sort_values("importance"), x="importance", y="feature",
+                orientation="h", title="feature importance (random forest)",
+                color_discrete_sequence=["#45B7D1"])
+    fig.update_layout(height=380)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # early sentiment — TODO: make this pull from actual model instead of hardcoding
+    st.subheader("early prediction")
+    early = pd.DataFrame({
+        "window": ["7 days","14 days","30 days","all data"],
+        "MAE": [0.918, 0.893, 0.905, 0.758],
+        "corr": [0.138, 0.126, 0.128, 0.263]
+    })
+    st.dataframe(early, hide_index=True, use_container_width=True)
+    st.caption("even first-week comments get similar accuracy — the signal shows up immediately")
+
+
+# footer
+st.markdown("---")
+st.caption("data: tmdb + omdb + reddit | 44k comments | 571 movies | snowflake | "
+           "[github](https://github.com/athulyabiju23/moviepulse)| [Tableau Dashboard](https://public.tableau.com/app/profile/athulya.biju/viz/Book1_17727323861070/Dashboard1)")
