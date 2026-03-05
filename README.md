@@ -4,7 +4,7 @@
 
 Built an end-to-end data pipeline that scrapes 44,000+ Reddit comments across 571 movies (Hollywood, Bollywood, Kollywood), performs multilingual sentiment analysis, and compares Reddit-derived scores against IMDb and Rotten Tomatoes ratings.
 
-**Core Finding:** Reddit ratings are weakly correlated with IMDb (r=0.263) and Rotten Tomatoes (r=0.298), while IMDb and RT agree strongly (r=0.685). Reddit represents a genuinely independent movie rating system — harsher overall, with the largest divergence in prestige genres like Biography and History.
+**Core Finding:** **Core Finding:** Reddit ratings are weakly correlated with IMDb (r=0.263) and Rotten Tomatoes (r=0.298), while IMDb and RT agree strongly (r=0.685). A predictive model using Reddit features barely outperforms naive baseline (0.3% improvement), confirming Reddit represents a genuinely independent movie rating system.
 
 **Dashboard:** [View on Tableau Public](https://public.tableau.com/app/profile/athulya.biju/viz/Book1_17727323861070/Dashboard1)
 
@@ -47,7 +47,7 @@ Tableau Dashboard → Interactive visualization
 | Reddit–IMDb correlation | 0.263 (weak, statistically significant) |
 | Reddit–RT correlation | 0.298 (weak, statistically significant) |
 | IMDb–RT correlation | 0.685 (strong) |
-| Prediction accuracy (RF) | MAE = 0.758 (within ~0.76 points of IMDb) |
+| Prediction accuracy (RF) | MAE = 0.758 (barely beats baseline of 0.761) |
 | Early prediction (7 days) | MAE = 0.918 |
 | Best sentiment model | RoBERTa (correlation: 0.416 with explicit ratings) |
 | Non-English comments | 10.9% (handled via Multilingual BERT) |
@@ -70,6 +70,7 @@ Compared 4 sentiment models against 588 comments with explicit user ratings (e.g
 - **Regional differences:** Bollywood RT scores (4.90) are much lower than IMDb (6.23) — critics don't rate Bollywood well
 - **Prediction insight:** Negative comment ratio is the strongest predictor of IMDb ratings, not average sentiment score
 - **Language matters:** 10.9% of comments were non-English, concentrated in Bollywood (14%) and Kollywood (21%) subreddits
+- **Prediction confirms independence:** Random Forest (MAE=0.758) barely outperforms naive baseline (MAE=0.761), proving Reddit sentiment is fundamentally independent from IMDb, not a noisy proxy
 
 ## Tech Stack
 
