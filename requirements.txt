@@ -1,0 +1,14 @@
+pandas
+numpy
+requests
+snowflake-connector-python
+python-dotenv
+vaderSentiment
+textblob
+transformers
+torch
+langdetect
+scikit-learn
+matplotlib
+seaborn
+scipy
