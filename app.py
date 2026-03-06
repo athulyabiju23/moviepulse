@@ -270,12 +270,7 @@ with tab4:
     c1.metric("Random Forest MAE", "0.758")
     c2.metric("Baseline (just guess avg)", "0.761")
     c3.metric("Improvement", "0.3%", delta="0.003")
-
-    st.warning(
-        "the model barely beats naive baseline. this actually confirms our main finding — "
-        "reddit sentiment is fundamentally independent from imdb, not just a noisy version of it."
-    )
-
+    
     # feature importance
     st.subheader("which reddit features matter?")
     feats = pd.DataFrame({
