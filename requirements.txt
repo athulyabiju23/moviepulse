@@ -12,3 +12,6 @@ scikit-learn
 matplotlib
 seaborn
 scipy
+streamlit
+plotly
+praw
