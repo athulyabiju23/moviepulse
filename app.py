@@ -7,22 +7,57 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import snowflake.connector
 
 st.set_page_config(page_title="Reddit Movie Pulse", page_icon="🎬", layout="wide")
 
-# load csvs
-@st.cache_data
+# ---- snowflake connection ----
+@st.cache_data(ttl=600)
 def load_data():
-    comp = pd.read_csv("data/platform_comparison.csv")
-    scores = pd.read_csv("data/reddit_movie_scores_v2.csv")
-    comments = pd.read_csv("data/reddit_sentiment_multilingual.csv")
-    comments["comment_timestamp"] = pd.to_datetime(comments["comment_timestamp"])
-    return comp, scores, comments
+    """Load data from Snowflake. Falls back to local CSVs if connection fails."""
+    try:
+        conn = snowflake.connector.connect(
+            user=st.secrets["snowflake"]["user"],
+            password=st.secrets["snowflake"]["password"],
+            account=st.secrets["snowflake"]["account"],
+            warehouse=st.secrets["snowflake"]["warehouse"],
+            database=st.secrets["snowflake"]["database"],
+            schema=st.secrets["snowflake"].get("schema", "ANALYTICS"),
+        )
+        cur = conn.cursor()
+
+        cur.execute("SELECT * FROM PLATFORM_COMPARISON")
+        comp = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+
+        cur.execute("SELECT * FROM MOVIE_SCORES_V2")
+        scores = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+
+        cur.execute("SELECT * FROM SENTIMENT_MULTILINGUAL")
+        comments = pd.DataFrame(cur.fetchall(), columns=[desc[0] for desc in cur.description])
+
+        cur.close()
+        conn.close()
+
+        # snowflake returns UPPERCASE column names — lowercase them to match the rest of the app
+        comp.columns = comp.columns.str.lower()
+        scores.columns = scores.columns.str.lower()
+        comments.columns = comments.columns.str.lower()
+
+        comments["comment_timestamp"] = pd.to_datetime(comments["comment_timestamp"])
+        return comp, scores, comments
+
+    except Exception as e:
+        st.warning(f"Snowflake connection failed ({e}), trying local CSVs...")
+        comp = pd.read_csv("data/platform_comparison.csv")
+        scores = pd.read_csv("data/reddit_movie_scores_v2.csv")
+        comments = pd.read_csv("data/reddit_sentiment_multilingual.csv")
+        comments["comment_timestamp"] = pd.to_datetime(comments["comment_timestamp"])
+        return comp, scores, comments
 
 try:
     comp, scores, comments = load_data()
-except:
-    st.error("cant find data files! put csvs in data/ folder")
+except Exception as e:
+    st.error(f"Can't load data: {e}")
     st.stop()
 
 # ---- sidebar ----
@@ -285,7 +320,7 @@ with tab4:
     fig.update_layout(height=380)
     st.plotly_chart(fig, use_container_width=True)
 
-    # early sentiment — TODO: make this pull from actual model instead of hardcoding
+    # early sentiment
     st.subheader("early prediction")
     early = pd.DataFrame({
         "window": ["7 days","14 days","30 days","all data"],
