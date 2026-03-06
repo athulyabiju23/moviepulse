@@ -12,6 +12,6 @@ scikit-learn
 matplotlib
 seaborn
 scipy
-streamlit
+streamlit==1.55.0
 plotly
 praw
