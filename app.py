@@ -197,15 +197,73 @@ with tab2:
 
     if pick:
         m = df[df["movie_name"] == pick].iloc[0]
-        m_comments = comments[comments["movie_name"] == pick]
-        # only show comments that actually mention the movie
-        movie_words = pick.lower().split()
-        relevant = m_comments[m_comments["comment_text"].str.lower().apply(
-            lambda x: any(w in x for w in movie_words if len(w) > 3)
-        )]
-        if len(relevant) > 3:
-            m_comments = relevant
-        st.caption(f"found {len(m_comments)} comments for '{pick}'")
+        m_comments = comments[comments["movie_name"] == pick].copy()
+
+        # ── filter out irrelevant comments ──
+        # comments scraped from general subs (r/india, r/kerala etc) often
+        # match the movie title but are actually about cities, people, or news
+        movie_signals = [
+            "movie", "film", "watch", "scene", "acting", "actor", "actress",
+            "director", "plot", "story", "character", "ending", "screenplay",
+            "cinematography", "soundtrack", "ost", "bgm", "interval",
+            "climax", "twist", "review", "rating", "imdb", "ott",
+            "theater", "theatre", "netflix", "prime", "hotstar",
+            "/10", "out of 10", "stars", "masterpiece", "boring",
+            "overrated", "underrated", "must watch", "worth watching",
+            "blockbuster", "flop", "hit", "paisa vasool",
+        ]
+        # subreddits where posts are almost certainly about movies
+        movie_subs = {"movies","flicks","truefilm","moviesuggestions","cinema",
+                      "letterboxd","bollywood","kollywood","tollywood",
+                      "tamilmovies","telugumovies","malayalammovies",
+                      "bollywoodmusicvideos","malayalammusic"}
+
+        # get list of all movie names to detect when comments mention OTHER movies
+        all_movie_names = set(df["movie_name"].str.lower().unique())
+        pick_words = set(pick.lower().split())
+
+        def is_relevant(row):
+            text = str(row["comment_text"]).lower()
+            sub = str(row.get("subreddit", "")).lower()
+
+            # best case: comment mentions this movie by name
+            mentions_this = pick.lower() in text
+            if mentions_this:
+                return True
+
+            # has explicit rating → probably about the movie
+            if pd.notna(row.get("extracted_rating")):
+                return True
+
+            # check if comment mentions a DIFFERENT movie but not this one
+            # catches "best biopic" threads where ppl discuss other movies
+            for other_movie in all_movie_names:
+                if other_movie == pick.lower():
+                    continue
+                # skip short names that could match random words
+                if len(other_movie) < 5:
+                    continue
+                if other_movie in text and not mentions_this:
+                    return False
+
+            # on movie subs, accept if it has movie discussion language
+            if sub in movie_subs:
+                return any(s in text for s in movie_signals)
+
+            # general subs need movie signals
+            return any(s in text for s in movie_signals)
+
+        if len(m_comments) > 0:
+            m_comments["_relevant"] = m_comments.apply(is_relevant, axis=1)
+            relevant = m_comments[m_comments["_relevant"]]
+            # only use filtered set if we still have enough comments
+            if len(relevant) >= 3:
+                m_comments = relevant.drop(columns=["_relevant"])
+            else:
+                m_comments = m_comments.drop(columns=["_relevant"])
+
+        total_raw = len(comments[comments["movie_name"] == pick])
+        st.caption(f"showing {len(m_comments)} relevant comments (of {total_raw} scraped) for '{pick}'")
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Reddit", f"{m['reddit_score']:.2f}")
@@ -253,7 +311,7 @@ with tab3:
     with left:
         models = pd.DataFrame({
             "Model": ["VADER","TextBlob","RoBERTa","Multi BERT"],
-            "MAE": [2.65, 2.29, 1.94, 1.93],
+            "MAE": [2.65, 1.84, 2.45, 1.99],
             "Type": ["Lexicon","Lexicon","Transformer","Transformer"]
         })
         fig = px.bar(models, x="Model", y="MAE", color="Type",
@@ -262,7 +320,7 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
     with right:
-        models["Corr"] = [0.125, 0.127, 0.416, 0.365]
+        models["Corr"] = [0.251, 0.335, 0.448, 0.467]
         fig = px.bar(models, x="Model", y="Corr", color="Type",
                     title="correlation w/ explicit ratings (higher = better)",
                     color_discrete_map={"Lexicon":"#94a3b8","Transformer":"#FF4500"})
@@ -302,17 +360,17 @@ with tab4:
     st.subheader("can reddit predict imdb ratings?")
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Random Forest MAE", "0.758")
-    c2.metric("Baseline (just guess avg)", "0.761")
-    c3.metric("Improvement", "0.3%", delta="0.003")
+    c1.metric("Random Forest MAE", "0.683")
+    c2.metric("Baseline (just guess avg)", "0.752")
+    c3.metric("Improvement", "9.1%", delta="0.069")
     
     # feature importance
     st.subheader("which reddit features matter?")
     feats = pd.DataFrame({
-        "feature": ["negative_ratio","neutral_ratio","sentiment_shift","positive_ratio",
-                    "avg_score","std_score","controversy","avg_upvotes",
-                    "median_score","max_upvotes","comment_count","log_comments"],
-        "importance": [0.198,0.108,0.102,0.089,0.086,0.073,0.066,0.065,0.063,0.061,0.047,0.041]
+        "feature": ["negative_ratio","avg_score","sentiment_shift","std_score",
+                    "controversy","positive_ratio","avg_upvotes","max_upvotes",
+                    "comment_count","neutral_ratio","median_score","log_comments"],
+        "importance": [0.229,0.142,0.115,0.110,0.086,0.064,0.062,0.056,0.048,0.040,0.030,0.018]
     })
     fig = px.bar(feats.sort_values("importance"), x="importance", y="feature",
                 orientation="h", title="feature importance (random forest)",
@@ -324,8 +382,8 @@ with tab4:
     st.subheader("early prediction")
     early = pd.DataFrame({
         "window": ["7 days","14 days","30 days","all data"],
-        "MAE": [0.918, 0.893, 0.905, 0.758],
-        "corr": [0.138, 0.126, 0.128, 0.263]
+        "MAE": [0.787, 0.805, 0.784, 0.683],
+        "corr": [0.203, 0.197, 0.227, 0.348]
     })
     st.dataframe(early, hide_index=True, use_container_width=True)
     st.caption("even first-week comments get similar accuracy — the signal shows up immediately")
@@ -333,5 +391,5 @@ with tab4:
 
 # footer
 st.markdown("---")
-st.caption("data: tmdb + omdb + reddit | 44k comments | 571 movies | snowflake | "
+st.caption("data: tmdb + omdb + reddit | 26k comments | 571 movies | snowflake | "
            "[github](https://github.com/athulyabiju23/moviepulse)| [Tableau Dashboard](https://public.tableau.com/app/profile/athulya.biju/viz/Book1_17727323861070/Dashboard1)")
