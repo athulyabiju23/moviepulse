@@ -391,5 +391,5 @@ with tab4:
 
 # footer
 st.markdown("---")
-st.caption("data: tmdb + omdb + reddit | 26k comments | 571 movies | snowflake | "
+st.caption("data: tmdb + omdb + reddit | 51k comments | 417 movies | snowflake | "
            "[github](https://github.com/athulyabiju23/moviepulse)| [Tableau Dashboard](https://public.tableau.com/app/profile/athulya.biju/viz/Book1_17727323861070/Dashboard1)")
